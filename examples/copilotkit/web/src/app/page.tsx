@@ -2,6 +2,7 @@
 
 import { ExampleLayout } from "@/components/example-layout";
 import { ExampleCanvas } from "@/components/example-canvas";
+import { ThreadSidebar } from "@/components/thread-sidebar";
 import { useGenerativeUIExamples, useExampleSuggestions } from "@/hooks";
 
 import {
@@ -19,6 +20,7 @@ export default function HomePage() {
     // The provider owns one active thread for both the chat and app canvas.
     <CopilotChatConfigurationProvider agentId="default">
       <div className={styles.layout}>
+        <ThreadSidebar />
         <div className={styles.mainPanel}>
           <ExampleLayout
             chatContent={

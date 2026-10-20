@@ -68,7 +68,7 @@ PORT=4000 npm run server
 PI_AGUI_URL=http://127.0.0.1:4000 npm run dev:web
 ```
 
-打开 `http://127.0.0.1:3000`。示例包含流式聊天、附件、工具调用卡片、前端工具、人工确认、图表和共享状态画布。pi 的内置 `read`、`bash`、`edit`、`write` 等工具可由同一个聊天界面直接调用。CopilotKit Runtime 独立安装，避免给适配器核心引入整个服务端依赖树。
+打开 `http://127.0.0.1:3000`。示例包含流式聊天、附件、工具调用卡片、前端工具、人工确认、图表和共享状态画布，以及一个使用 CopilotKit 本地线程接口的会话侧栏。会话可以新建、切换、重命名和删除；当前使用 `InMemoryAgentRunner`，因此 Web 进程重启后历史会清空。pi 的内置 `read`、`bash`、`edit`、`write` 等工具可由同一个聊天界面直接调用。CopilotKit Runtime 独立安装，避免给适配器核心引入整个服务端依赖树。
 
 ## 工具、状态和人工介入
 

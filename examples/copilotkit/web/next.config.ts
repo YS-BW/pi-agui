@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 const nextConfig: NextConfig = {
 	agentRules: false,
+	devIndicators: false,
 	turbopack: {
 		root: fileURLToPath(new URL(".", import.meta.url)),
 	},
