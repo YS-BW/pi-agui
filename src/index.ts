@@ -10,6 +10,7 @@
 export {
 	createTranslator,
 	stringifyToolResult,
+	FORWARDED_TO_CLIENT,
 	type Translator,
 	type TranslatorOptions,
 } from "./translate.ts";
@@ -30,5 +31,17 @@ export {
 	type UiRequest,
 	type UiResponse,
 } from "./ui-context.ts";
+
+export {
+	createStateStore,
+	createStateTool,
+	STATE_TOOL_NAME,
+	type StateStore,
+} from "./state.ts";
+
+export {
+	toFrontendAgentTools,
+	type FrontendToolOptions,
+} from "./frontend-tools.ts";
 
 export { createAguiServer, type ServeOptions } from "./server.ts";

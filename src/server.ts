@@ -160,7 +160,13 @@ export function createAguiServer(options: ServeOptions) {
 					toolCalls: true,
 					reasoning: true,
 					approvals: "custom:pi.ui_request",
-					stateSnapshots: false,
+					stateSnapshots: true,
+					activities: true,
+					messagesSnapshot: true,
+					frontendTools: true,
+					tokenUsage: true,
+					reasoningSignatures: true,
+					runOutcomes: ["success", "cancelled"],
 					reconnect: "GET /threads/:id/events?after=<seq>",
 				},
 			});
@@ -263,7 +269,7 @@ export function createAguiServer(options: ServeOptions) {
 			return;
 		}
 
-		void thread.run(runId, text, images).catch((error) => {
+		void thread.run(runId, text, images, input).catch((error) => {
 			sse.write({ type: EventType.RUN_ERROR, message: error instanceof Error ? error.message : String(error) } as BaseEvent);
 			sse.end();
 		});
@@ -282,7 +288,7 @@ export function createAguiServer(options: ServeOptions) {
 			return;
 		}
 		const runId = randomUUID();
-		void thread.run(runId, text, body?.images);
+		void thread.run(runId, text, body?.images, body);
 		json(res, 202, { runId, threadId: thread.id });
 	}
 

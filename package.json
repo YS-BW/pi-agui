@@ -11,7 +11,9 @@
 		"smoke": "node examples/smoke.ts",
 		"smoke:client": "node examples/client-smoke.ts",
 		"smoke:approval": "node examples/approval-smoke.ts",
-		"postinstall": "node scripts/link-pi.mjs"
+		"postinstall": "node scripts/link-pi.mjs",
+		"smoke:capabilities": "node examples/capabilities-smoke.ts",
+		"smoke:activity": "node examples/activity-smoke.ts"
 	},
 	"engines": {
 		"node": ">=22.18"
@@ -25,6 +27,12 @@
 		"@types/node": "^22.19.1",
 		"typescript": "^5.9.3"
 	},
-	"keywords": ["pi", "ag-ui", "agent", "sse", "coding-agent"],
+	"keywords": [
+		"pi",
+		"ag-ui",
+		"agent",
+		"sse",
+		"coding-agent"
+	],
 	"license": "MIT"
 }
