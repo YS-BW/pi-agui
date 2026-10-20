@@ -1,0 +1,30 @@
+{
+	"name": "pi-agui",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "把 pi 的 AgentSession 包成 AG-UI 服务：SSE 事件流、工具调用、人工介入、断线回放",
+	"scripts": {
+		"server": "node examples/serve.ts",
+		"test": "node --test test/*.test.ts",
+		"typecheck": "tsc -p tsconfig.json",
+		"smoke": "node examples/smoke.ts",
+		"smoke:client": "node examples/client-smoke.ts",
+		"smoke:approval": "node examples/approval-smoke.ts",
+		"postinstall": "node scripts/link-pi.mjs"
+	},
+	"engines": {
+		"node": ">=22.18"
+	},
+	"dependencies": {
+		"@ag-ui/core": "^1.0.3",
+		"@ag-ui/client": "^1.0.3",
+		"@ag-ui/encoder": "^1.0.3"
+	},
+	"devDependencies": {
+		"@types/node": "^22.19.1",
+		"typescript": "^5.9.3"
+	},
+	"keywords": ["pi", "ag-ui", "agent", "sse", "coding-agent"],
+	"license": "MIT"
+}
