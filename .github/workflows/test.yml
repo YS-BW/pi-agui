@@ -26,5 +26,5 @@ jobs:
                       package-lock.json
                       examples/copilotkit/package-lock.json
             - run: npm ci --ignore-scripts
-      - run: npm ci --prefix examples/copilotkit --ignore-scripts --legacy-peer-deps --omit=optional
+            - run: npm ci --prefix examples/copilotkit --ignore-scripts --legacy-peer-deps --omit=optional
             - run: npm run test:copilotkit
