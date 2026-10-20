@@ -28,3 +28,18 @@ jobs:
             - run: npm ci --ignore-scripts
             - run: npm ci --prefix examples/copilotkit --ignore-scripts --legacy-peer-deps --omit=optional
             - run: npm run test:copilotkit
+    copilotkit-web:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version-file: .nvmrc
+                  cache: npm
+                  cache-dependency-path: examples/copilotkit/web/package-lock.json
+            - run: npm ci --prefix examples/copilotkit/web --legacy-peer-deps
+            - run: npm run typecheck:web
+            - run: npm run build:web
+              env:
+                  COPILOTKIT_TELEMETRY_DISABLED: "true"
+                  NEXT_TELEMETRY_DISABLED: "1"

@@ -2,7 +2,20 @@
 
 参考 CopilotKit 官方 `examples/integrations/claude-sdk-typescript`，将其中的 HTTP agent 地址指向 pi-agui。Runtime 固定为 1.79.1，AG-UI client 为 1.0.3。
 
-先在仓库根目录启动 `npm run server`，然后在你的 Next.js 应用的 `app/api/copilotkit/[[...slug]]/route.ts` 中使用：
+先在仓库根目录启动 `npm run server`。若当前环境提供 Magpie 的 `OPENAI_BASE_URL`/`MAGPIE_HOST` 与 `MAGPIE_CRED`，服务会自动发现模型并优先选择 `POINT_MODEL`。若要覆盖模型，可显式传入 `PI_AGUI_MODEL`，例如：
+
+```bash
+PORT=4000 PI_AGUI_MODEL=auto/deepseek-v4-pro npm run server
+```
+
+完整可运行前端位于 [`web`](web)，无需自己复制下面这段代码：
+
+```bash
+npm ci --prefix examples/copilotkit/web --legacy-peer-deps
+PI_AGUI_URL=http://127.0.0.1:4000 npm run dev:web
+```
+
+打开 `http://127.0.0.1:3000`。若要把 pi-agui 接入已有的 Next.js 应用，在 `app/api/copilotkit/[[...slug]]/route.ts` 中使用：
 
 ```ts
 import { CopilotRuntime, InMemoryAgentRunner, createCopilotEndpoint } from "@copilotkit/runtime/v2";

@@ -2,7 +2,7 @@
 
 把 [Pi SDK](https://github.com/earendil-works/pi/tree/main/packages/coding-agent) 的 `AgentSession` 接到 [AG-UI](https://github.com/ag-ui-protocol/ag-ui)，让 CopilotKit 或官方 `HttpAgent` 通过 HTTP/SSE 使用 pi 的编码、工具和会话能力。
 
-保留轻量分层：`server.ts` 管 HTTP，`thread.ts` 管 pi 会话与 run，`translate.ts` 翻译事件，`ui-context.ts` 桥接扩展交互。仓库不包含聊天页面。
+保留轻量分层：`server.ts` 管 HTTP，`thread.ts` 管 pi 会话与 run，`translate.ts` 翻译事件，`ui-context.ts` 桥接扩展交互。仓库提供一个可直接运行的 CopilotKit v2 前端示例。
 
 ## 已对齐的版本
 
@@ -22,12 +22,19 @@
 
 ```bash
 npm ci --ignore-scripts
-# 如尚未配置模型，使用项目内的 pi 登录或选择模型：
-npx pi
+# 如尚未配置模型，先登录或设置对应 provider 的 API key：
+# npx pi
 npm run server
 ```
 
-默认地址 `http://127.0.0.1:3000`。环境变量：`PORT`、`HOST`、`PI_AGUI_CWD`。使用 pi 的现有模型配置和凭据；不会替你创建 API key。
+默认地址 `http://127.0.0.1:3000`。服务启动时会读取 pi 的认证配置与 provider 环境变量，并显式选择一个可用模型。环境变量：
+
+- `PORT`：监听端口，默认 `3000`
+- `HOST`：监听地址，默认 `127.0.0.1`
+- `PI_AGUI_CWD`：agent 默认工作区
+- `PI_AGUI_MODEL`：可选的 `provider/model-id`；Magpie 模式下也可直接写 Magpie 返回的模型 ID
+
+若存在 `OPENAI_BASE_URL`/`MAGPIE_HOST` 与 `MAGPIE_CRED`/`OPENAI_API_KEY`，启动脚本会从 Magpie 的 `/v1/models` 动态发现模型并优先选择 `POINT_MODEL`。否则使用 pi 自己已认证的模型。不会替用户创建 API key。
 
 ```ts
 import { HttpAgent } from "@ag-ui/client";
@@ -44,13 +51,24 @@ console.log(agent.messages);
 
 ## CopilotKit
 
-见 [`examples/copilotkit`](examples/copilotkit)。集成采用官方示例的链路：
+完整的 Next.js 前端在 [`examples/copilotkit/web`](examples/copilotkit/web)，Runtime 契约测试与配置说明在 [`examples/copilotkit`](examples/copilotkit)。集成采用官方 Claude TypeScript 示例的链路：
 
 ```text
 CopilotKit UI → CopilotRuntime v2 → HttpAgent → pi-agui → AgentSession
 ```
 
-该示例独立安装 Runtime，避免给适配器核心引入整个 CopilotKit 服务端依赖树。
+两个终端分别启动：
+
+```bash
+# 终端 1，仓库根目录；存在 Magpie 环境变量时自动使用 POINT_MODEL
+PORT=4000 npm run server
+
+# 终端 2，仓库根目录；首次运行前安装：
+# npm ci --prefix examples/copilotkit/web --legacy-peer-deps
+PI_AGUI_URL=http://127.0.0.1:4000 npm run dev:web
+```
+
+打开 `http://127.0.0.1:3000`。示例包含流式聊天、附件、工具调用卡片、前端工具、人工确认、图表和共享状态画布。pi 的内置 `read`、`bash`、`edit`、`write` 等工具可由同一个聊天界面直接调用。CopilotKit Runtime 独立安装，避免给适配器核心引入整个服务端依赖树。
 
 ## 工具、状态和人工介入
 

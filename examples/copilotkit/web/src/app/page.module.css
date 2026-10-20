@@ -1,0 +1,15 @@
+.layout {
+  min-height: 100vh;
+  min-height: 100svh;
+  height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+}
+
+.mainPanel {
+  min-width: 0;
+  min-height: 100vh;
+  min-height: 100svh;
+  height: 100dvh;
+  overflow: auto;
+}
