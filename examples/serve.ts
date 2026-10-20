@@ -13,9 +13,16 @@ const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? "127.0.0.1";
 const cwd = process.env.PI_AGUI_CWD ?? process.cwd();
 
-const { listen } = createAguiServer({ port, host, cwd });
+const { listen, close } = createAguiServer({ port, host, cwd });
 const url = await listen();
 
 console.log(`AG-UI 服务已启动：${url}`);
 console.log(`工作目录：${cwd}`);
 console.log(`AG-UI run 入口：POST ${url}/`);
+
+process.once("SIGINT", () => {
+	void close();
+});
+process.once("SIGTERM", () => {
+	void close();
+});

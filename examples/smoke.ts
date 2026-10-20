@@ -6,6 +6,7 @@
  */
 
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,7 +22,7 @@ async function main() {
 	const base = await listen();
 	console.log(`服务已起：${base}，工作目录：${cwd}\n`);
 
-	const threadId = "smoke-thread-1";
+	const threadId = randomUUID();
 	const runId = "smoke-run-1";
 
 	const response = await fetch(`${base}/`, {

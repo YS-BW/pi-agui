@@ -6,6 +6,7 @@
  */
 
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +21,7 @@ async function main() {
 	const { listen, supervisor } = createAguiServer({ port, host: "127.0.0.1", cwd });
 	const base = await listen();
 
-	const agent = new HttpAgent({ url: `${base}/`, agentId: "pi", threadId: "client-thread-1" });
+	const agent = new HttpAgent({ url: `${base}/`, agentId: "pi", threadId: randomUUID() });
 
 	const seen: string[] = [];
 	agent.subscribe({

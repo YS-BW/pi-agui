@@ -45,7 +45,7 @@ export interface UiBridge {
 	/** 交给 session.bindExtensions() 的 uiContext */
 	context: ExtensionUIContext;
 	/** 前端回填答案 */
-	resolve(requestId: string, response: UiResponse): void;
+	resolve(requestId: string, response: UiResponse): boolean;
 	/** run 结束/中断时清掉所有挂起请求（扩展会拿到默认值继续跑） */
 	cancelAll(): void;
 	/** 当前挂起的请求数 */
@@ -119,16 +119,40 @@ export function createUiBridge(options: UiBridgeOptions): UiBridge {
 
 	const context: ServedUiMethods & Record<string, unknown> = {
 		select(title, choices, opts) {
-			return dialog<string | undefined>("select", () => ({ title, options: choices }), opts, undefined, (r) => r.value ?? undefined);
+			return dialog<string | undefined>(
+				"select",
+				() => ({ title, options: choices }),
+				opts,
+				undefined,
+				(r) => r.value ?? undefined,
+			);
 		},
 		confirm(title, message, opts) {
-			return dialog<boolean>("confirm", () => ({ title, message }), opts, false, (r) => r.confirmed === true);
+			return dialog<boolean>(
+				"confirm",
+				() => ({ title, message }),
+				opts,
+				false,
+				(r) => r.confirmed === true,
+			);
 		},
 		input(title, placeholder, opts) {
-			return dialog<string | undefined>("input", () => ({ title, placeholder }), opts, undefined, (r) => r.value ?? undefined);
+			return dialog<string | undefined>(
+				"input",
+				() => ({ title, placeholder }),
+				opts,
+				undefined,
+				(r) => r.value ?? undefined,
+			);
 		},
 		editor(title, prefill) {
-			return dialog<string | undefined>("editor", () => ({ title, prefill }), undefined, undefined, (r) => r.value ?? undefined);
+			return dialog<string | undefined>(
+				"editor",
+				() => ({ title, prefill }),
+				undefined,
+				undefined,
+				(r) => r.value ?? undefined,
+			);
 		},
 
 		notify(message, type) {
@@ -189,7 +213,10 @@ export function createUiBridge(options: UiBridgeOptions): UiBridge {
 	return {
 		context: context as unknown as ExtensionUIContext,
 		resolve(requestId, response) {
-			pending.get(requestId)?.settle(response);
+			const request = pending.get(requestId);
+			if (!request) return false;
+			request.settle(response);
+			return true;
 		},
 		cancelAll() {
 			for (const [, entry] of [...pending]) entry.settle({ cancelled: true });

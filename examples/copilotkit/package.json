@@ -1,0 +1,12 @@
+{
+	"name": "pi-agui-copilotkit-example",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"test": "COPILOTKIT_TELEMETRY_DISABLED=true node --test runtime.test.mts"
+	},
+	"dependencies": {
+		"@copilotkit/runtime": "1.79.1",
+		"@ag-ui/client": "1.0.3"
+	}
+}

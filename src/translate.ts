@@ -17,7 +17,7 @@
  *    不发快照前端就会显示已经不在上下文里的旧消息。
  */
 
-import { EventType, type BaseEvent, type Message } from "@ag-ui/core";
+import { PROTOCOL_VERSION, EventType, type BaseEvent, type Message } from "@ag-ui/core";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 /** 工具结果被「转交给客户端执行」时的占位文本，CopilotKit 靠这个字符串识别 */
@@ -42,11 +42,13 @@ export interface TranslatorOptions {
 	 * 例如 `ag_ui_update_state` —— 前端只应该看到状态变化，不该看到这个工具本身。
 	 */
 	internalTools?: Iterable<string>;
+	getPendingToolCallIds?: () => string[];
 }
 
 export interface Translator {
 	/** run 开始时调用一次，产出 RUN_STARTED */
 	start(): BaseEvent[];
+	finish(aborted?: boolean): BaseEvent[];
 	/** 塞进一个 pi 事件，产出 0..n 个 AG-UI 事件 */
 	translate(event: AgentSessionEvent): BaseEvent[];
 	/** 收尾：补齐所有未关闭的块（文本 / 推理 / 工具调用） + MESSAGES_SNAPSHOT */
@@ -65,7 +67,9 @@ export function stringifyToolResult(result: unknown, maxChars: number): string {
 		if (Array.isArray(v)) {
 			// pi 的工具结果是 { content: [{type:"text", text}], details } 这种形状
 			const texts = v
-				.map((part) => (part && typeof part === "object" && (part as { type?: string }).type === "text" ? String((part as { text?: unknown }).text ?? "") : ""))
+				.map((part) =>
+					part && typeof part === "object" && (part as { type?: string }).type === "text" ? String((part as { text?: unknown }).text ?? "") : "",
+				)
 				.filter(Boolean);
 			if (texts.length > 0) return texts.join("\n");
 		}
@@ -90,34 +94,18 @@ export function stringifyToolResult(result: unknown, maxChars: number): string {
 	return `${text.slice(0, maxChars)}\n\n…（已截断，原始长度 ${text.length} 字符）`;
 }
 
-/** 从一条 assistant 消息里抽出推理签名 */
-interface ThinkingSignature {
-	thinking: string;
-	signature: string;
-}
-
-function extractThinkingSignatures(message: unknown): ThinkingSignature[] {
-	const content = (message as { content?: unknown })?.content;
-	if (!Array.isArray(content)) return [];
-	const out: ThinkingSignature[] = [];
-	for (const part of content) {
-		if (!part || typeof part !== "object") continue;
-		const block = part as { type?: string; thinking?: unknown; thinkingSignature?: unknown };
-		if (block.type !== "thinking") continue;
-		const signature = typeof block.thinkingSignature === "string" ? block.thinkingSignature : "";
-		if (!signature) continue;
-		out.push({ thinking: String(block.thinking ?? ""), signature });
-	}
-	return out;
-}
-
 /** 从流式 partial 消息里取出 contentIndex 位置上的工具调用（还没成型时可能没有 id/name） */
 function toolCallAt(partial: unknown, contentIndex: number): { id?: string; name?: string; thoughtSignature?: string } | null {
 	const content = (partial as { content?: unknown })?.content;
 	if (!Array.isArray(content)) return null;
 	const block = content[contentIndex];
 	if (!block || typeof block !== "object") return null;
-	const call = block as { type?: string; id?: unknown; name?: unknown; thoughtSignature?: unknown };
+	const call = block as {
+		type?: string;
+		id?: unknown;
+		name?: unknown;
+		thoughtSignature?: unknown;
+	};
 	if (call.type !== "toolCall") return null;
 	return {
 		id: typeof call.id === "string" && call.id ? call.id : undefined,
@@ -155,11 +143,17 @@ export function createTranslator(options: TranslatorOptions): Translator {
 	const maxToolResultChars = options.maxToolResultChars ?? 100_000;
 
 	let counter = 0;
-	const mint = (prefix: string) => `${prefix}_${++counter}`;
+	const mint = (prefix: string) => `${runId}_${prefix}_${++counter}`;
 
 	const internalTools = new Set(options.internalTools ?? []);
 
 	let started = false;
+	let finished = false;
+	let snapshotSent = false;
+	let lastError: string | undefined;
+	const reasoningIds = new Map<number, string>();
+	const toolArgs = new Map<string, string>();
+	const bufferedToolArgs = new Map<number, string>();
 	let stepCounter = 0;
 	let stepOpen = false;
 	/** 上一条助手消息在本层的 id */
@@ -181,11 +175,26 @@ export function createTranslator(options: TranslatorOptions): Translator {
 	/** bash 实时输出流：key → 已发出的分片（用来做 ACTIVITY_DELTA 的增量补丁） */
 	const bashStreams = new Map<string, { messageId: string; chunks: string[] }>();
 	/** 本次 run 的 token 用量，按 provider/model 分桶 */
-	const usageBuckets = new Map<string, { provider: string; model: string; input: number; output: number; total: number; reasoning: number; cacheRead: number; cacheWrite: number }>();
+	const usageBuckets = new Map<
+		string,
+		{
+			provider: string;
+			model: string;
+			input: number;
+			output: number;
+			total: number;
+			reasoning: number;
+			cacheRead: number;
+			cacheWrite: number;
+		}
+	>();
 
 	const closeReasoning = (out: BaseEvent[]) => {
 		if (reasoningMessageId === null) return;
-		out.push({ type: EventType.REASONING_MESSAGE_END, messageId: reasoningMessageId });
+		out.push({
+			type: EventType.REASONING_MESSAGE_END,
+			messageId: reasoningMessageId,
+		});
 		out.push({ type: EventType.REASONING_END, messageId: reasoningMessageId });
 		reasoningMessageId = null;
 	};
@@ -199,18 +208,29 @@ export function createTranslator(options: TranslatorOptions): Translator {
 		if (reasoningMessageId !== null) return reasoningMessageId;
 		closeText(out);
 		reasoningMessageId = mint("rsn");
-		out.push({ type: EventType.REASONING_START, messageId: reasoningMessageId });
-		out.push({ type: EventType.REASONING_MESSAGE_START, messageId: reasoningMessageId, role: "reasoning" });
+		out.push({
+			type: EventType.REASONING_START,
+			messageId: reasoningMessageId,
+		});
+		out.push({
+			type: EventType.REASONING_MESSAGE_START,
+			messageId: reasoningMessageId,
+			role: "reasoning",
+		});
 		return reasoningMessageId;
 	};
 
 	const openText = (out: BaseEvent[]): string => {
 		if (textMessageId !== null) return textMessageId;
-		textMessageId = assistantMessageId ?? mint("msg");
+		textMessageId = textMessageOpened ? mint("msg") : (assistantMessageId ?? mint("msg"));
 		assistantMessageId = textMessageId;
 		textMessageOpened = true;
 		closeReasoning(out);
-		out.push({ type: EventType.TEXT_MESSAGE_START, messageId: textMessageId, role: "assistant" });
+		out.push({
+			type: EventType.TEXT_MESSAGE_START,
+			messageId: textMessageId,
+			role: "assistant",
+		});
 		return textMessageId;
 	};
 
@@ -233,7 +253,11 @@ export function createTranslator(options: TranslatorOptions): Translator {
 		const id = assistantMessageId ?? mint("msg");
 		assistantMessageId = id;
 		textMessageOpened = true;
-		out.push({ type: EventType.TEXT_MESSAGE_START, messageId: id, role: "assistant" });
+		out.push({
+			type: EventType.TEXT_MESSAGE_START,
+			messageId: id,
+			role: "assistant",
+		});
 		out.push({ type: EventType.TEXT_MESSAGE_END, messageId: id });
 		return id;
 	};
@@ -242,10 +266,18 @@ export function createTranslator(options: TranslatorOptions): Translator {
 		start() {
 			if (started) return [];
 			started = true;
-			return [{ type: EventType.RUN_STARTED, threadId, runId }];
+			return [
+				{
+					type: EventType.RUN_STARTED,
+					threadId,
+					runId,
+					protocolVersion: PROTOCOL_VERSION,
+				},
+			];
 		},
 
 		translate(event) {
+			if (finished) return [];
 			const out: BaseEvent[] = [];
 			switch (event.type) {
 				case "agent_start":
@@ -255,7 +287,10 @@ export function createTranslator(options: TranslatorOptions): Translator {
 				case "turn_start": {
 					stepCounter += 1;
 					stepOpen = true;
-					out.push({ type: EventType.STEP_STARTED, stepName: `turn-${stepCounter}` });
+					out.push({
+						type: EventType.STEP_STARTED,
+						stepName: `turn-${stepCounter}`,
+					});
 					return out;
 				}
 
@@ -264,7 +299,10 @@ export function createTranslator(options: TranslatorOptions): Translator {
 					closeReasoning(out);
 					if (stepOpen) {
 						stepOpen = false;
-						out.push({ type: EventType.STEP_FINISHED, stepName: `turn-${stepCounter}` });
+						out.push({
+							type: EventType.STEP_FINISHED,
+							stepName: `turn-${stepCounter}`,
+						});
 					}
 					return out;
 				}
@@ -273,6 +311,10 @@ export function createTranslator(options: TranslatorOptions): Translator {
 					if (event.message.role === "assistant") {
 						assistantMessageId = mint("msg");
 						textMessageOpened = false;
+						textSentChars = 0;
+						reasoningIds.clear();
+						bufferedToolArgs.clear();
+						lastError = undefined;
 					}
 					return out;
 				}
@@ -288,7 +330,11 @@ export function createTranslator(options: TranslatorOptions): Translator {
 					if (inner.type === "text_delta") {
 						const messageId = openText(out);
 						textSentChars += inner.delta.length;
-						out.push({ type: EventType.TEXT_MESSAGE_CONTENT, messageId, delta: inner.delta });
+						out.push({
+							type: EventType.TEXT_MESSAGE_CONTENT,
+							messageId,
+							delta: inner.delta,
+						});
 						return out;
 					}
 					if (inner.type === "text_end") {
@@ -298,18 +344,27 @@ export function createTranslator(options: TranslatorOptions): Translator {
 						const rest = inner.content.slice(textSentChars);
 						if (rest.length > 0) {
 							textSentChars = inner.content.length;
-							out.push({ type: EventType.TEXT_MESSAGE_CONTENT, messageId, delta: rest });
+							out.push({
+								type: EventType.TEXT_MESSAGE_CONTENT,
+								messageId,
+								delta: rest,
+							});
 						}
 						return out;
 					}
 					if (includeReasoning && inner.type === "thinking_start") {
 						// redacted thinking 只有 start/end、没有 delta，必须在这里就把块开出来
-						openReasoning(out);
+						reasoningIds.set(inner.contentIndex, openReasoning(out));
 						return out;
 					}
 					if (includeReasoning && inner.type === "thinking_delta") {
 						const messageId = openReasoning(out);
-						out.push({ type: EventType.REASONING_MESSAGE_CONTENT, messageId, delta: inner.delta });
+						reasoningIds.set(inner.contentIndex, messageId);
+						out.push({
+							type: EventType.REASONING_MESSAGE_CONTENT,
+							messageId,
+							delta: inner.delta,
+						});
 						return out;
 					}
 					if (inner.type === "thinking_end") {
@@ -319,11 +374,13 @@ export function createTranslator(options: TranslatorOptions): Translator {
 					// 在这里就发 TOOL_CALL_START/ARGS，前端能更早看到调用；
 					// 等 tool_execution_start 才发的话参数已经全了，看不到渐进。
 					if (inner.type === "toolcall_start" || inner.type === "toolcall_delta") {
+						if (inner.type === "toolcall_delta")
+							bufferedToolArgs.set(inner.contentIndex, (bufferedToolArgs.get(inner.contentIndex) ?? "") + inner.delta);
 						const call = toolCallAt(inner.partial, inner.contentIndex);
 						// id / name 缺一个就不流式发，交给后面的 tool_execution_start 兜底
 						if (!call?.id || !call.name) return out;
 						if (internalTools.has(call.name)) return out;
-						if (inner.type === "toolcall_start") {
+						if (!streamedToolCalls.has(call.id)) {
 							closeText(out);
 							closeReasoning(out);
 							const parentMessageId = ensureParentMessage(out);
@@ -336,10 +393,24 @@ export function createTranslator(options: TranslatorOptions): Translator {
 								toolCallName: call.name,
 								parentMessageId,
 							});
+							const buffered = bufferedToolArgs.get(inner.contentIndex);
+							if (buffered) {
+								toolArgs.set(call.id, buffered);
+								out.push({
+									type: EventType.TOOL_CALL_ARGS,
+									toolCallId: call.id,
+									delta: buffered,
+								});
+							}
 							return out;
 						}
-						if (streamedToolCalls.has(call.id) && inner.delta) {
-							out.push({ type: EventType.TOOL_CALL_ARGS, toolCallId: call.id, delta: inner.delta });
+						if (inner.type === "toolcall_delta" && inner.delta) {
+							toolArgs.set(call.id, (toolArgs.get(call.id) ?? "") + inner.delta);
+							out.push({
+								type: EventType.TOOL_CALL_ARGS,
+								toolCallId: call.id,
+								delta: inner.delta,
+							});
 						}
 						return out;
 					}
@@ -347,6 +418,24 @@ export function createTranslator(options: TranslatorOptions): Translator {
 						// 工具调用级别的推理签名（Gemini function-call thought signature 等），
 						// AG-UI 用 subtype "tool-call" + entityId=toolCallId 表达。
 						const call = inner.toolCall;
+						if (internalTools.has(call.name)) return out;
+						if (!streamedToolCalls.has(call.id)) {
+							out.push({
+								type: EventType.TOOL_CALL_START,
+								toolCallId: call.id,
+								toolCallName: call.name,
+								parentMessageId: ensureParentMessage(out),
+							});
+							streamedToolCalls.add(call.id);
+						}
+						if (!toolArgs.get(call.id))
+							out.push({
+								type: EventType.TOOL_CALL_ARGS,
+								toolCallId: call.id,
+								delta: JSON.stringify(call.arguments ?? {}),
+							});
+						out.push({ type: EventType.TOOL_CALL_END, toolCallId: call.id });
+						openToolCalls.delete(call.id);
 						if (includeReasoning && call?.thoughtSignature) {
 							out.push({
 								type: EventType.REASONING_ENCRYPTED_VALUE,
@@ -361,6 +450,8 @@ export function createTranslator(options: TranslatorOptions): Translator {
 				}
 
 				case "message_end": {
+					if (event.message.role !== "assistant") return out;
+					if (event.message.stopReason === "error") lastError = event.message.errorMessage || "Model request failed";
 					const reasoningId = reasoningMessageId;
 					closeText(out);
 					closeReasoning(out);
@@ -371,7 +462,14 @@ export function createTranslator(options: TranslatorOptions): Translator {
 						role?: string;
 						provider?: string;
 						model?: string;
-						usage?: { input?: number; output?: number; totalTokens?: number; reasoning?: number; cacheRead?: number; cacheWrite?: number };
+						usage?: {
+							input?: number;
+							output?: number;
+							totalTokens?: number;
+							reasoning?: number;
+							cacheRead?: number;
+							cacheWrite?: number;
+						};
 					};
 					if (assistant.role === "assistant" && assistant.usage) {
 						const provider = assistant.provider ?? "";
@@ -399,12 +497,13 @@ export function createTranslator(options: TranslatorOptions): Translator {
 					// 推理签名（Anthropic thinking signature / OpenAI encrypted_content）
 					// 必须在 REASONING_END 之后发，前端才会把它和这条消息关联上。
 					if (includeReasoning) {
-						for (const signature of extractThinkingSignatures(event.message)) {
+						for (const [index, block] of (event.message.content ?? []).entries()) {
+							if (block.type !== "thinking" || !block.thinkingSignature) continue;
 							out.push({
 								type: EventType.REASONING_ENCRYPTED_VALUE,
 								subtype: "message",
-								entityId: reasoningId ?? assistantMessageId ?? mint("msg"),
-								encryptedValue: signature.signature,
+								entityId: reasoningIds.get(index) ?? reasoningId ?? assistantMessageId ?? mint("msg"),
+								encryptedValue: block.thinkingSignature,
 							});
 						}
 					}
@@ -472,7 +571,10 @@ export function createTranslator(options: TranslatorOptions): Translator {
 					if (internalTools.has(event.toolName)) return out;
 					const wasOpen = openToolCalls.delete(event.toolCallId);
 					if (wasOpen) {
-						out.push({ type: EventType.TOOL_CALL_END, toolCallId: event.toolCallId });
+						out.push({
+							type: EventType.TOOL_CALL_END,
+							toolCallId: event.toolCallId,
+						});
 					}
 					if (activities.delete(`tool:${event.toolCallId}`)) {
 						// 进度块收尾：把最后的内容固化成最终结果
@@ -487,10 +589,12 @@ export function createTranslator(options: TranslatorOptions): Translator {
 								isError: event.isError === true,
 								// pi 用单调时钟量的耗时，AG-UI 没有对应字段，放进活动块最合适
 								durationMs: event.durationMs,
+								partial: stringifyToolResult(event.result, 4000),
 							},
 							replace: true,
 						});
 					}
+					if ((event.result as { details?: { forwardedToClient?: boolean } })?.details?.forwardedToClient) return out;
 					out.push({
 						type: EventType.TOOL_CALL_RESULT,
 						messageId: mint("tool"),
@@ -507,28 +611,28 @@ export function createTranslator(options: TranslatorOptions): Translator {
 					// 不用它收尾：pi 之后可能自动重试或压缩重跑，等 agent_settled
 					return out;
 
-				case "agent_settled": {
-					out.push(...this.close());
-					out.push({
-						type: EventType.RUN_FINISHED,
-						threadId,
-						runId,
-						// 被 abort 的 run 不能报成功：协议里 absent 才表示 success
-						...(event.aborted ? { outcome: { type: "cancelled" as const } } : {}),
-						...(usageBuckets.size > 0 ? { usage: [...usageBuckets.values()].map(toTokenUsage) } : {}),
-					});
-					return out;
-				}
+				case "agent_settled":
+					return this.finish(event.aborted);
 
 				case "compaction_start":
-					out.push({ type: EventType.CUSTOM, name: "pi.compaction", value: { phase: "start", reason: event.reason } });
+					out.push({
+						type: EventType.CUSTOM,
+						name: "pi.compaction",
+						value: { phase: "start", reason: event.reason },
+					});
 					return out;
 
 				case "compaction_end": {
 					out.push({
 						type: EventType.CUSTOM,
 						name: "pi.compaction",
-						value: { phase: "end", reason: event.reason, aborted: event.aborted, willRetry: event.willRetry, errorMessage: event.errorMessage },
+						value: {
+							phase: "end",
+							reason: event.reason,
+							aborted: event.aborted,
+							willRetry: event.willRetry,
+							errorMessage: event.errorMessage,
+						},
 					});
 					// 压缩改写了历史：立刻给前端一份权威快照，否则界面还挂着已经不存在的旧消息
 					const messages = options.getMessages?.();
@@ -542,7 +646,12 @@ export function createTranslator(options: TranslatorOptions): Translator {
 					out.push({
 						type: EventType.CUSTOM,
 						name: "pi.retry",
-						value: { attempt: event.attempt, maxAttempts: event.maxAttempts, delayMs: event.delayMs, errorMessage: event.errorMessage },
+						value: {
+							attempt: event.attempt,
+							maxAttempts: event.maxAttempts,
+							delayMs: event.delayMs,
+							errorMessage: event.errorMessage,
+						},
 					});
 					return out;
 
@@ -577,35 +686,72 @@ export function createTranslator(options: TranslatorOptions): Translator {
 				}
 
 				case "thinking_level_changed":
-					out.push({ type: EventType.CUSTOM, name: "pi.thinking_level", value: { level: event.level } });
+					out.push({
+						type: EventType.CUSTOM,
+						name: "pi.thinking_level",
+						value: { level: event.level },
+					});
 					return out;
 
 				case "auto_retry_end":
-					out.push({ type: EventType.CUSTOM, name: "pi.retry_end", value: { success: event.success, attempt: event.attempt, finalError: event.finalError } });
+					out.push({
+						type: EventType.CUSTOM,
+						name: "pi.retry_end",
+						value: {
+							success: event.success,
+							attempt: event.attempt,
+							finalError: event.finalError,
+						},
+					});
 					return out;
 
 				case "summarization_retry_scheduled":
 					out.push({
 						type: EventType.CUSTOM,
 						name: "pi.summarization_retry",
-						value: { phase: "scheduled", attempt: event.attempt, maxAttempts: event.maxAttempts, delayMs: event.delayMs, errorMessage: event.errorMessage },
+						value: {
+							phase: "scheduled",
+							attempt: event.attempt,
+							maxAttempts: event.maxAttempts,
+							delayMs: event.delayMs,
+							errorMessage: event.errorMessage,
+						},
 					});
 					return out;
 
 				case "summarization_retry_attempt_start":
-					out.push({ type: EventType.CUSTOM, name: "pi.summarization_retry", value: { phase: "start", source: event.source } });
+					out.push({
+						type: EventType.CUSTOM,
+						name: "pi.summarization_retry",
+						value: { phase: "start", source: event.source },
+					});
 					return out;
 
 				case "summarization_retry_finished":
-					out.push({ type: EventType.CUSTOM, name: "pi.summarization_retry", value: { phase: "finished" } });
+					out.push({
+						type: EventType.CUSTOM,
+						name: "pi.summarization_retry",
+						value: { phase: "finished" },
+					});
 					return out;
 
 				case "queue_update":
-					out.push({ type: EventType.CUSTOM, name: "pi.queue", value: { steering: [...event.steering], followUp: [...event.followUp] } });
+					out.push({
+						type: EventType.CUSTOM,
+						name: "pi.queue",
+						value: {
+							steering: [...event.steering],
+							followUp: [...event.followUp],
+						},
+					});
 					return out;
 
 				case "session_info_changed":
-					out.push({ type: EventType.CUSTOM, name: "pi.session_info", value: { name: event.name } });
+					out.push({
+						type: EventType.CUSTOM,
+						name: "pi.session_info",
+						value: { name: event.name },
+					});
 					return out;
 
 				default:
@@ -613,9 +759,26 @@ export function createTranslator(options: TranslatorOptions): Translator {
 			}
 		},
 
+		finish(aborted = false) {
+			if (finished) return [];
+			if (lastError && !aborted) return this.error(lastError);
+			finished = true;
+			const pendingToolCallIds = options.getPendingToolCallIds?.() ?? [];
+			return [
+				...this.close(),
+				{
+					type: EventType.RUN_FINISHED,
+					threadId,
+					runId,
+					...(aborted ? { outcome: { type: "cancelled" } } : pendingToolCallIds.length ? { outcome: { type: "success", pendingToolCallIds } } : {}),
+					...(usageBuckets.size ? { usage: [...usageBuckets.values()].map(toTokenUsage) } : {}),
+				},
+			];
+		},
+
 		activity(activityType, key, content, replace = true) {
 			const messageId = `act_${key}`;
-			if (!started) return [];
+			if (!started || finished) return [];
 			if (activities.has(`act:${key}`) && replace === false) {
 				// 增量由调用方自己拼 patch，这里只负责发
 			}
@@ -641,22 +804,30 @@ export function createTranslator(options: TranslatorOptions): Translator {
 			openToolCalls.clear();
 			if (stepOpen) {
 				stepOpen = false;
-				out.push({ type: EventType.STEP_FINISHED, stepName: `turn-${stepCounter}` });
+				out.push({
+					type: EventType.STEP_FINISHED,
+					stepName: `turn-${stepCounter}`,
+				});
 			}
 
 			// 官方 Claude adapter 也是每次 run 结束前发一次 MESSAGES_SNAPSHOT。
 			// 它是唯一能让前端和 pi 真实上下文对齐的事件（压缩/重试之后尤其重要）。
 			const messages = options.getMessages?.();
-			if (messages && messages.length > 0) {
+			if (messages && !snapshotSent) {
+				snapshotSent = true;
 				out.push({ type: EventType.MESSAGES_SNAPSHOT, messages });
 			}
 			return out;
 		},
 
 		error(message) {
+			if (finished) return [];
+			finished = true;
 			const out = this.close();
 			out.push({
 				type: EventType.RUN_ERROR,
+				threadId,
+				runId,
 				message,
 				// 失败的 run 也已经烧了 token，账要照报
 				...(usageBuckets.size > 0 ? { usage: [...usageBuckets.values()].map(toTokenUsage) } : {}),

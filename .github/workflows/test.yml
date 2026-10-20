@@ -1,0 +1,30 @@
+name: test
+on:
+    push:
+    pull_request:
+jobs:
+    adapter:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version-file: .nvmrc
+                  cache: npm
+            - run: npm ci --ignore-scripts
+            - run: npm run typecheck
+            - run: npm test
+    copilotkit:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version-file: .nvmrc
+                  cache: npm
+                  cache-dependency-path: |
+                      package-lock.json
+                      examples/copilotkit/package-lock.json
+            - run: npm ci --ignore-scripts
+      - run: npm ci --prefix examples/copilotkit --ignore-scripts --legacy-peer-deps --omit=optional
+            - run: npm run test:copilotkit

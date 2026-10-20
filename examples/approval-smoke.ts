@@ -8,6 +8,7 @@
  */
 
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +31,7 @@ export default function (pi: ExtensionAPI) {
 		// ctx 在第五个参数上，不是常见的第三个。
 		execute: async (_toolCallId, { feature }, _signal, _onUpdate, ctx) => {
 			const approved = await ctx.ui.confirm("发布确认", "要发布 " + feature + " 到生产吗？");
-			return approved ? "已发布：" + feature : "已取消，没有发布";
+			return { content: [{ type: "text", text: approved ? "已发布：" + feature : "已取消，没有发布" }], details: { approved } };
 		},
 	});
 }
@@ -46,7 +47,7 @@ async function main() {
 	const base = await listen();
 	console.log(`服务已起：${base}\n扩展目录：${join(cwd, ".pi", "extensions")}\n`);
 
-	const threadId = "approval-thread-1";
+	const threadId = randomUUID();
 	const response = await fetch(`${base}/`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json", Accept: "text/event-stream" },

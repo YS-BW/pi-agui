@@ -2,7 +2,7 @@
  * 能力冒烟：用**真实的 pi agent**（默认模型 + 内置 bash/read/write 工具）验证
  * AG-UI 侧的四个新增能力：
  *
- *   1. 前端工具桥   —— 模型调用只在浏览器里执行的工具，后端回占位符
+ *   1. 前端工具桥   —— 模型调用只在浏览器里执行的工具，结束当前 run，回传真实结果后续跑
  *   2. 共享状态     —— 模型调 ag_ui_update_state，前端只看到 STATE_SNAPSHOT
  *   3. 活动块       —— 长命令执行中的进度翻成 ACTIVITY_SNAPSHOT
  *   4. 消息快照     —— 每个 run 收尾都发 MESSAGES_SNAPSHOT
@@ -12,6 +12,7 @@
  */
 
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -63,7 +64,7 @@ async function main() {
 	const base = await listen();
 	console.log(`服务已起：${base}\n工作目录：${cwd}\n`);
 
-	const threadId = "capability-thread";
+	const threadId = randomUUID();
 	const frames = await runOnce(base, {
 		threadId,
 		runId: "capability-run-1",
@@ -136,7 +137,7 @@ async function main() {
 
 	assert.ok(toolNames.includes("pieChart"), "模型应该调用了前端工具 pieChart");
 	const pieResult = results.find((frame) => frame.toolCallId === toolStarts.find((start) => start.toolCallName === "pieChart")?.toolCallId);
-	assert.equal(pieResult?.content, "Forwarded to client", "前端工具的结果必须是占位符");
+	assert.equal(pieResult, undefined, "前端执行前不能发送假工具结果");
 
 	assert.ok(!toolNames.includes("ag_ui_update_state"), "内部状态工具不能出现在事件流里");
 	assert.ok(snapshots.length >= 1, "应该有 STATE_SNAPSHOT");
@@ -153,7 +154,14 @@ async function main() {
 	assert.ok(Array.isArray(usage) && usage.length >= 1, "RUN_FINISHED 必须带 token 用量");
 	assert.ok((usage![0]!.inputTokens as number) > 0, "inputTokens 应该大于 0");
 	assert.ok((usage![0]!.outputTokens as number) > 0, "outputTokens 应该大于 0");
-	assert.equal(finished.outcome, undefined, "正常结束不该带 outcome");
+	const pendingIds = (finished.outcome as { pendingToolCallIds?: string[] })?.pendingToolCallIds ?? [];
+	assert.ok(pendingIds.length > 0, "必须声明等待客户端执行的工具");
+	const resumed = await runOnce(base, {
+		threadId, runId: randomUUID(), tools: [], context: [], state: snapshot, forwardedProps: {},
+		messages: pendingIds.map(toolCallId => ({ id: randomUUID(), role: "tool", toolCallId, content: "Chart rendered successfully" })),
+	});
+	assert.equal(resumed.at(-1)?.type, "RUN_FINISHED");
+	assert.ok(resumed.some(frame => frame.type === "TEXT_MESSAGE_CONTENT"), "模型收到真实工具结果后应继续回复");
 
 	console.log(`\nACTIVITY_SNAPSHOT × ${activities.length}（本次没有长命令，0 也正常）`);
 	console.log(`用量：${JSON.stringify(usage)}`);

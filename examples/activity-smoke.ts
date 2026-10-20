@@ -10,6 +10,7 @@
  */
 
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -63,7 +64,7 @@ async function main() {
 
 	const command = 'for i in $(seq 1 12); do echo "tick $i"; sleep 0.25; done';
 	const frames = await runOnce(base, {
-		threadId: "activity-thread",
+		threadId: randomUUID(),
 		runId: "activity-run-1",
 		messages: [
 			{

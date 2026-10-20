@@ -27,7 +27,7 @@ test("start 只发一次 RUN_STARTED", () => {
 	const translator = makeTranslator();
 	const first = translator.start();
 	assert.deepEqual(types(first), [EventType.RUN_STARTED]);
-	assert.deepEqual(first[0], { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1" });
+	assert.deepEqual(first[0], { type: EventType.RUN_STARTED, threadId: "t1", runId: "r1", protocolVersion: "1.0" });
 	// agent_start 不重复发
 	assert.deepEqual(translator.translate(asEvent({ type: "agent_start" })), []);
 	assert.deepEqual(translator.start(), []);
@@ -51,7 +51,7 @@ test("文本增量：第一次 delta 才开 TEXT_MESSAGE_START，message_end 关
 	// 同一条消息的 id 必须稳定
 	assert.equal(field(second[0], "messageId"), messageId);
 
-	const end = translator.translate(asEvent({ type: "message_end", message: {} }));
+	const end = translator.translate(asEvent({ type: "message_end", message: { role: "assistant", content: [] } }));
 	assert.deepEqual(types(end), [EventType.TEXT_MESSAGE_END]);
 	assert.equal(field(end[0], "messageId"), messageId);
 });
@@ -61,7 +61,7 @@ test("纯工具调用轮：补一条空助手消息当父消息，工具调用�
 	translator.start();
 	translator.translate(asEvent({ type: "message_start", message: { role: "assistant" } }));
 	// 这一轮只有 toolCall，没有文本
-	translator.translate(asEvent({ type: "message_end", message: {} }));
+	translator.translate(asEvent({ type: "message_end", message: { role: "assistant", content: [] } }));
 
 	const start = translator.translate(
 		asEvent({ type: "tool_execution_start", toolCallId: "call_1", toolName: "read", args: { path: "a.txt" } }),
@@ -94,7 +94,7 @@ test("文本 + 工具：工具调用挂在已经关闭的文本消息上", () =>
 		asEvent({ type: "message_update", message: {}, assistantMessageEvent: { type: "text_delta", delta: "我查一下" } }),
 	);
 	const textMessageId = field(text[0], "messageId");
-	translator.translate(asEvent({ type: "message_end", message: {} }));
+	translator.translate(asEvent({ type: "message_end", message: { role: "assistant", content: [] } }));
 
 	const toolStart = translator.translate(
 		asEvent({ type: "tool_execution_start", toolCallId: "call_2", toolName: "bash", args: { cmd: "ls" } }),
@@ -505,8 +505,8 @@ test("工具调用级别的推理签名走 subtype tool-call", () => {
 			},
 		}),
 	);
-	assert.deepEqual(types(out), [EventType.REASONING_ENCRYPTED_VALUE]);
-	assert.equal(field(out[0], "subtype"), "tool-call");
-	assert.equal(field(out[0], "entityId"), "call_7");
-	assert.equal(field(out[0], "encryptedValue"), "sig_tool");
+	const signature = out.find((event) => event.type === EventType.REASONING_ENCRYPTED_VALUE)!;
+	assert.equal(field(signature, "subtype"), "tool-call");
+	assert.equal(field(signature, "entityId"), "call_7");
+	assert.equal(field(signature, "encryptedValue"), "sig_tool");
 });

@@ -11,19 +11,22 @@
 		"smoke": "node examples/smoke.ts",
 		"smoke:client": "node examples/client-smoke.ts",
 		"smoke:approval": "node examples/approval-smoke.ts",
-		"postinstall": "node scripts/link-pi.mjs",
 		"smoke:capabilities": "node examples/capabilities-smoke.ts",
-		"smoke:activity": "node examples/activity-smoke.ts"
+		"smoke:activity": "node examples/activity-smoke.ts",
+		"test:copilotkit": "npm --prefix examples/copilotkit test"
 	},
 	"engines": {
-		"node": ">=22.18"
+		"node": ">=22.19"
 	},
 	"dependencies": {
-		"@ag-ui/core": "^1.0.3",
-		"@ag-ui/client": "^1.0.3",
-		"@ag-ui/encoder": "^1.0.3"
+		"@ag-ui/client": "1.0.3",
+		"@ag-ui/core": "1.0.3",
+		"@ag-ui/encoder": "1.0.3",
+		"@earendil-works/pi-coding-agent": "1.3.0",
+		"zod": "3.25.76"
 	},
 	"devDependencies": {
+		"@earendil-works/pi-ai": "1.3.0",
 		"@types/node": "^22.19.1",
 		"typescript": "^5.9.3"
 	},
